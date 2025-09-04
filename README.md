@@ -17,6 +17,7 @@
 - `curl http://localhost:8000/health` - Check API health
 - Uses Ollama with phi3:mini and tinyllama models for local AI processing
 - Health checks now use `/api/tags` endpoint for better reliability
+- Includes GOOGLE_API_KEY environment variable for cloud fallback
 
 ### Testing
 - `uv run pytest` - Run all tests
@@ -83,7 +84,9 @@ The system now supports dual AI processing modes:
    - `model=mock` - Returns predefined suggestions for testing
    - Default: Auto-fallback from local → cloud → mock
 
-4. **System Prompt**: Extracted to `_get_system_prompt()` method in `services/ai_service.py:28-31`
+4. **System Prompt**: Extracted to `_get_system_prompt()` method in `services/ai_service.py:33-36`
+   - Centralized prompt management for consistency across AI backends
+   - Easy modification without code changes in multiple locations
 
 ### Dependencies
 - Uses `uv` for package management
@@ -96,6 +99,13 @@ The system now supports dual AI processing modes:
 - Ruff for linting, MyPy for type checking
 
 ### Environment Setup
-- `.env` file with `GOOGLE_API_KEY` for cloud AI fallback
+- `.env` file with `GOOGLE_API_KEY` for cloud AI fallback (required for cloud mode)
 - `USE_LOCAL_LLM=true` to enable local processing (default)
 - `OLLAMA_ENDPOINTS=http://localhost:8080` for load balancer URL
+
+### Troubleshooting
+**Cloud LLM returning mock responses:**
+- Ensure `GOOGLE_API_KEY` is set in `.env` file
+- Verify API key has Gemini API access enabled
+- Check container logs: `docker logs ai-task-manager` for initialization errors
+- GoogleModel uses environment variable automatically (no manual passing required)

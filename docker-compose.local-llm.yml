@@ -40,6 +40,7 @@ services:
       - "8080:80"
     volumes:
       - ./nginx-llm.conf:/etc/nginx/nginx.conf:ro
+      - /dev/null:/etc/nginx/conf.d/default.conf
     depends_on:
       - ollama-1
       - ollama-2
@@ -61,6 +62,7 @@ services:
       - OLLAMA_ENDPOINTS=http://nginx-lb:80
       - USE_LOCAL_LLM=true
       - DEBUG=true
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
     volumes:
       - ./:/app
     depends_on:

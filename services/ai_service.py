@@ -19,12 +19,15 @@ class AITaskAnalyzer:
         if settings.google_api_key:
             try:
                 self.agent = Agent(
-                    GoogleModel('gemini-1.5-flash', api_key=settings.google_api_key),
+                    GoogleModel('gemini-1.5-flash'),
                     system_prompt=self._get_system_prompt()
                 )
-            except Exception:
+                logger.info("google_agent_initialized", api_key_present=bool(settings.google_api_key))
+            except Exception as e:
+                logger.error("google_agent_init_failed", error=str(e))
                 self.agent = None
         else:
+            logger.warning("google_api_key_missing")
             self.agent = None
     
     def _get_system_prompt(self) -> str:
@@ -39,11 +42,14 @@ class AITaskAnalyzer:
             return self._mock_suggestion(task)
         
         if force_model == "cloud":
+            logger.info("cloud_model_requested", task_id=task.id, agent_available=bool(self.agent))
             if self.agent:
                 try:
                     return await self._analyze_with_cloud_llm(task)
                 except Exception as e:
                     logger.error("forced_cloud_llm_failed", task_id=task.id, error=str(e))
+            else:
+                logger.warning("cloud_agent_unavailable", task_id=task.id)
             return self._mock_suggestion(task)
         
         if force_model == "local" or (settings.use_local_llm and not force_model):
@@ -98,7 +104,7 @@ Suggest how to approach this task effectively:"""
         AI_REQUESTS.labels(status="success", model_type="cloud").inc()
         
         logger.info("ai_analysis_complete", task_id=task.id, model_type="cloud")
-        return result.data
+        return result.output
     
     def _mock_suggestion(self, task: Task) -> str:
         """Mock suggestions for demo"""

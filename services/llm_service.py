@@ -12,14 +12,14 @@ class LocalLLMService:
             "http://localhost:11434",  # ollama-1
             "http://localhost:11435",  # ollama-2
         ]
-        self.load_balancer_url = "http://localhost:8080"
+        self.load_balancer_url = "http://nginx-lb:80"
         self.current_endpoint = 0
         
     async def health_check(self, endpoint: str) -> bool:
         """Check if LLM endpoint is healthy"""
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{endpoint}/api/health")
+                response = await client.get(f"{endpoint}/api/tags")
                 return response.status_code == 200
         except:
             return False
@@ -51,6 +51,7 @@ class LocalLLMService:
     
     async def _call_ollama(self, endpoint: str, prompt: str, model: str) -> str:
         """Call Ollama API"""
+        print(f"DEBUG: Using endpoint: {endpoint}")  
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{endpoint}/api/generate",
