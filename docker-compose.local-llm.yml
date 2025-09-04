@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # Ollama instances with fastest models
+  ollama-1:
+    image: ollama/ollama:latest
+    container_name: ollama-1
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama1_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  ollama-2:
+    image: ollama/ollama:latest
+    container_name: ollama-2
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama2_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Load balancer
+  nginx-lb:
+    image: nginx:alpine
+    container_name: llm-loadbalancer
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx-llm.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - ollama-1
+      - ollama-2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Enhanced FastAPI app
+  api:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-task-manager
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_ENDPOINTS=http://nginx-lb:80
+      - USE_LOCAL_LLM=true
+      - DEBUG=true
+    volumes:
+      - ./:/app
+    depends_on:
+      - nginx-lb
+    command: uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  ollama1_data:
+  ollama2_data:

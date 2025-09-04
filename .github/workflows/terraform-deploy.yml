@@ -1,0 +1,133 @@
+name: Terraform Deploy to GKE
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-deploy.yml'
+  workflow_dispatch:
+
+env:
+  TF_VERSION: "1.6.0"
+  PROJECT_ID: your-gcp-project-id
+  SERVICE_NAME: ai-task-manager
+  REGION: us-central1
+
+jobs:
+  terraform-plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tfplanExitCode: ${{ steps.tf-plan.outputs.exitcode }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+        
+      - name: Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+        
+      - name: Terraform Plan
+        id: tf-plan
+        working-directory: terraform
+        run: |
+          export exitcode=0
+          terraform plan -detailed-exitcode -no-color -out tfplan || export exitcode=$?
+          
+          echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
+          
+          if [ $exitcode -eq 1 ]; then
+            echo Terraform Plan Failed!
+            exit 1
+          elif [ $exitcode -eq 2 ]; then
+            echo Plan Succeeded with Changes!
+          else
+            echo Plan Succeeded with No Changes!
+          fi
+          
+      - name: Publish Terraform Plan
+        uses: actions/upload-artifact@v3
+        with:
+          name: tfplan
+          path: terraform/tfplan
+
+  terraform-apply:
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    if: needs.terraform-plan.outputs.tfplanExitCode == 2
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+        
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v3
+        with:
+          name: tfplan
+          path: terraform
+          
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+  deploy-app:
+    needs: [terraform-plan, terraform-apply]
+    runs-on: ubuntu-latest
+    if: always() && (needs.terraform-apply.result == 'success' || needs.terraform-plan.outputs.tfplanExitCode == 0)
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker
+        
+      - name: Build and Push Docker Image
+        run: |
+          docker build -f Dockerfile.gpu -t gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
+          docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          
+      - name: Install Inference Gateway CRDs
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v0.3.0/manifests.yaml
+        run: |
+          gcloud container clusters get-credentials ai-task-manager-cluster --region=${{ env.REGION }}
+          
+          # Apply Kubernetes manifests
+          envsubst < k8s/deployment.yml | kubectl apply -f -
+          kubectl apply -f k8s/service.yml
+          
+          # Update deployment image
+          kubectl set image deployment/${{ env.SERVICE_NAME }} \
+            ${{ env.SERVICE_NAME }}=gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+            
+          kubectl rollout status deployment/${{ env.SERVICE_NAME }} --timeout=300s

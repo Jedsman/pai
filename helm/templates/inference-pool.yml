@@ -1,0 +1,59 @@
+{{- if .Values.inferencePool.enabled }}
+apiVersion: gateway.x-k8s.io/v1alpha1
+kind: InferencePool
+metadata:
+  name: {{ include "ai-task-manager.fullname" . }}-pool
+  labels:
+    {{- include "ai-task-manager.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.inferencePool.replicas }}
+  template:
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        ports:
+        - containerPort: {{ .Values.service.targetPort }}
+        env:
+          {{- range $key, $value := .Values.env }}
+          - name: {{ $key }}
+            {{- if kindIs "map" $value }}
+            {{- toYaml $value | nindent 12 }}
+            {{- else }}
+            value: {{ $value | quote }}
+            {{- end }}
+          {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.service.targetPort }}
+          initialDelaySeconds: 60
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.service.targetPort }}
+          initialDelaySeconds: 30
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: gateway.x-k8s.io/v1alpha1
+kind: InferenceModel
+metadata:
+  name: {{ include "ai-task-manager.fullname" . }}-model
+  labels:
+    {{- include "ai-task-manager.labels" . | nindent 4 }}
+spec:
+  modelName: "{{ include "ai-task-manager.fullname" . }}"
+  poolRef:
+    name: {{ include "ai-task-manager.fullname" . }}-pool
+  criticality: {{ .Values.inferencePool.criticality }}
+  targetLatency: {{ .Values.inferencePool.targetLatency }}
+{{- end }}

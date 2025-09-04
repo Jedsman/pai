@@ -1,0 +1,149 @@
+# === helm/Chart.yaml ===
+apiVersion: v2
+name: ai-task-manager
+description: FastAPI AI Task Manager with Pydantic AI
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - ai
+  - fastapi
+  - pydantic
+  - gke
+maintainers:
+  - name: Your Name
+    email: your.email@example.com
+
+dependencies:
+  - name: postgresql
+    version: "15.5.17"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+
+# === helm/values.yaml ===
+replicaCount: 2
+
+image:
+  repository: gcr.io/your-gcp-project-id/ai-task-manager
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 2000
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+  # GKE Inference Gateway configuration
+inferenceGateway:
+  enabled: true
+  gatewayClassName: gke-l7-regional-external-managed
+  hostname: ai-task-manager.your-domain.com
+  tls:
+    enabled: true
+    secretName: inference-tls-cert
+  
+inferencePool:
+  enabled: true
+  replicas: 2
+  criticality: standard
+  targetLatency: "2s"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+    nvidia.com/gpu: 1
+  requests:
+    cpu: 250m
+    memory: 256Mi
+    nvidia.com/gpu: 1
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  # Custom metrics for AI workloads
+  customMetrics:
+    - type: External
+      external:
+        metric:
+          name: inference_pool_average_kv_cache_utilization
+        target:
+          type: AverageValue
+          averageValue: "70"
+
+nodeSelector:
+  accelerator: nvidia-tesla-l4
+
+tolerations:
+  - key: "nvidia.com/gpu"
+    operator: "Equal"
+    value: "present"
+    effect: "NoSchedule"
+
+affinity: {}
+
+# Environment configuration
+env:
+  GOOGLE_API_KEY:
+    valueFrom:
+      secretKeyRef:
+        name: ai-secrets
+        key: google-api-key
+  DEBUG: "false"
+  APP_NAME: "AI Task Manager"
+
+# PostgreSQL configuration
+postgresql:
+  enabled: false
+  auth:
+    postgresPassword: changeme
+    database: taskmanager
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# Monitoring
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s

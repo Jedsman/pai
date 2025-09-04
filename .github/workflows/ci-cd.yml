@@ -1,0 +1,82 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: gcr.io
+  PROJECT_ID: your-gcp-project-id
+  SERVICE_NAME: ai-task-manager
+  REGION: us-central1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install UV
+        uses: astral-sh/setup-uv@v2
+        
+      - name: Set up Python
+        run: uv python install
+        
+      - name: Install dependencies
+        run: uv sync
+        
+      - name: Run linting
+        run: |
+          uv run ruff check
+          uv run mypy .
+          
+      - name: Run tests
+        run: uv run pytest -v --tb=short
+
+  build-local:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref != 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build local Docker image
+        run: docker build -t ${{ env.SERVICE_NAME }}:local .
+
+  deploy-gke:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker
+        
+      - name: Build GPU Docker image
+        run: |
+          docker build -f Dockerfile.gpu -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
+          docker build -f Dockerfile.gpu -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest .
+          
+      - name: Push to Container Registry
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest
+          
+      - name: Deploy to GKE
+        run: |
+          gcloud container clusters get-credentials ${{ env.SERVICE_NAME }}-cluster --region=${{ env.REGION }}
+          
+          # Update deployment with new image
+          kubectl set image deployment/${{ env.SERVICE_NAME }} \
+            ${{ env.SERVICE_NAME }}=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+            
+          # Wait for rollout
+          kubectl rollout status deployment/${{ env.SERVICE_NAME }} --timeout=300s
